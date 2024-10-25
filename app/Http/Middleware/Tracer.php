@@ -3,6 +3,9 @@
 namespace App\Http\Middleware;
 
 use Closure;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Http\Request;
+
 use OpenTelemetry\API\Trace\TracerInterface;
 use OpenTelemetry\Contrib\Otlp\SpanExporter;
 use OpenTelemetry\SDK\Common\Attribute\Attributes;
@@ -14,21 +17,80 @@ use OpenTelemetry\SDK\Trace\SpanProcessor\SimpleSpanProcessor;
 use OpenTelemetry\SDK\Trace\TracerProvider;
 use OpenTelemetry\SemConv\ResourceAttributes;
 use OpenTelemetry\Contrib\Otlp\OtlpHttpTransportFactory;
-
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Log;
+use OpenTelemetry\API\Trace\SpanInterface;
 
 class Tracer
 {
-    private TracerInterface $tracer;
+    /**
+     * Handle an incoming request.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @param  \Closure(\Illuminate\Http\Request): (\Illuminate\Http\Response|\Illuminate\Http\RedirectResponse)  $next
+     * @return \Illuminate\Http\Response|\Illuminate\Http\RedirectResponse
+     */
+    public function handle(Request $request, Closure $next)
+    {
+        // Create a new span for the incoming request
+        $path = $request->fullUrl();
+        $method = $request->getMethod();
 
-    public function __construct()
+        // Start the span for tracing the request
+        $parent = $this->getTracerProvider('TODO-APP')->spanBuilder("HTTP $method $path")->startSpan();
+        $parent->setAttribute('http.method', $method);
+        $parent->setAttribute('http.url', $path);
+
+        // Process the request
+        try {
+            // Enable query logging
+            DB::enableQueryLog();
+
+            // Pass the request to the next middleware/controller
+            $response = $next($request);
+
+            // Retrieve executed queries after the request
+            $queries = DB::getQueryLog();
+            $this->getSQLStatement($parent, $queries);
+
+            // Set HTTP status code in the trace
+            $parent->setAttribute('http.status_code', $response->getStatusCode());
+        } catch (\Exception $e) {
+            // Capture any exception that occurs during the request
+            $parent->recordException($e);
+            $parent->setAttribute('error', true);
+
+            throw $e; // Continue propagating the exception
+        }
+
+        $parent->end();
+        return $response;
+    }
+
+    private function getSQLStatement(SpanInterface $parent, array $queries)
+    {
+        // Retrieve the current parent span
+        $scope = $parent->activate();
+        $tracer = $this->getTracerProvider('TODO-DB');
+
+        try {
+            foreach ($queries as $query) {
+                // Start a new span for each SQL query
+                $querySpan = $tracer->spanBuilder("SQL Statement")->startSpan();
+                $querySpan->setAttribute('db.statement', $query['query']);
+                $querySpan->setAttribute('db.params', json_encode($query['bindings']));
+                $querySpan->setAttribute('db.type', 'mysql');
+                $querySpan->setAttribute('db.execution_time', $query['time']);
+                // End the query span
+                $querySpan->end();
+            }
+        } finally {
+            $scope->detach();
+        }
+    }
+
+    private function getTracerProvider(string $serviceName)
     {
         $resource = ResourceInfoFactory::emptyResource()->merge(ResourceInfo::create(Attributes::create([
-            ResourceAttributes::SERVICE_NAMESPACE => 'TODO',
-            ResourceAttributes::SERVICE_NAME => 'TODO-APP',
-            ResourceAttributes::SERVICE_VERSION => '0.1',
-            ResourceAttributes::DEPLOYMENT_ENVIRONMENT => 'development',
+            ResourceAttributes::SERVICE_NAME => $serviceName,
         ])));
 
         $transport = (new OtlpHttpTransportFactory())->create('http://localhost:4318/v1/traces', 'application/json');
@@ -45,48 +107,8 @@ class Tracer
             ->setSampler(new ParentBased(new AlwaysOnSampler()))
             ->build();
 
-        $this->tracer = $tracerProvider->getTracer(
-            'TODO',
-            '0.1.0',
+        return $tracerProvider->getTracer(
             'https://opentelemetry.io/schemas/1.24.0'
         );
-    }
-    /**
-     * Handle an incoming request.
-     *
-     * @param  \Illuminate\Http\Request  $request
-     * @param  \Closure(\Illuminate\Http\Request): (\Illuminate\Http\Response|\Illuminate\Http\RedirectResponse)  $next
-     * @return \Illuminate\Http\Response|\Illuminate\Http\RedirectResponse
-     */
-    public function handle(Request $request, Closure $next)
-    {
-        // Create a new span for the incoming request
-        $path = $request->fullUrl();
-        $method = $request->getMethod();
-
-        // Start the span for tracing the request
-        $span = $this->tracer->spanBuilder("HTTP $method $path")->startSpan();
-        $span->setAttribute('http.method', $method);
-        $span->setAttribute('http.url', $path);
-
-        // Process the request
-        try {
-            // Pass the request to the next middleware/controller
-            $response = $next($request);
-
-            // Set HTTP status code in the trace
-            $span->setAttribute('http.status_code', $response->getStatusCode());
-        } catch (\Exception $e) {
-            // Capture any exception that occurs during the request
-            $span->recordException($e);
-            $span->setAttribute('error', true);
-
-            throw $e; // Continue propagating the exception
-        } finally {
-            // End the span
-            $span->end();
-        }
-
-        return $response;
     }
 }
