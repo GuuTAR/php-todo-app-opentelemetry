@@ -1,22 +1,41 @@
 # Todo list
+
 Todo app with Laravel 8 & Vuejs
 
 ### Features
-- Add task
-- Mark task as completed
-- Delete task
+
+-   Add task
+-   Mark task as completed
+-   Delete task
 
 ![Todo](screenshot.png)
 
 ### Installation
 
-1. Run command `git clone https://github.com/moataseme/todo.git`
-2. Go to project folder (todo) or Run command `cd todo`
-3. Rename `.env.example` to `.env`
-4. Run command `composer install`
-5. Run command `npm install`
-6. Add database credentials to `.env`
-7. Run command `php artisan migrate`
-8. Run command `php artisan key:generate`
-9. Run command `php artisan serve`
-10. Open `localhost:8080` or full link ex. `localhost/{project-path}/public` in the browser
+1. Rename `.env.example` to `.env`
+2. Run command `composer install`
+3. Run command `npm install`
+4. Add database credentials to `.env`
+5. Run command `php artisan migrate`
+6. Run command `php artisan key:generate`
+7. Run command `php artisan serve`
+8. Open `localhost:8000` in the browser
+
+### Run jager
+
+```
+docker run -d --name jaeger \
+  -e COLLECTOR_ZIPKIN_HOST_PORT=:9411 \
+  -e COLLECTOR_OTLP_ENABLED=true \
+  -p 6831:6831/udp \
+  -p 6832:6832/udp \
+  -p 5778:5778 \
+  -p 16686:16686 \
+  -p 4317:4317 \
+  -p 4318:4318 \
+  -p 14250:14250 \
+  -p 14268:14268 \
+  -p 14269:14269 \
+  -p 9411:9411 \
+  jaegertracing/all-in-one:latest
+```
