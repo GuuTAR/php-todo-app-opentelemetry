@@ -19,7 +19,8 @@ Route::middleware('auth:api')->get('/user', function (Request $request) {
     return $request->user();
 });
 
-Route::group(['prefix' => 'tasks'], function(){
+Route::group(['prefix' => 'tasks'], function () {
+    Route::get('/hello', [TaskController::class, 'hello']);
     Route::get('/', [TaskController::class, 'index']);
     Route::post('/', [TaskController::class, 'store']);
     Route::put('/{id}', [TaskController::class, 'update'])->whereNumber('id');

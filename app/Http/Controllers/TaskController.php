@@ -117,4 +117,10 @@ class TaskController extends Controller
 
         return response()->json($response);
     }
+
+    public function hello()
+    {
+        error_log('MAAAAAAAAAAH');
+        return response()->json('Hello world!');
+    }
 }
