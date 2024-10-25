@@ -6,7 +6,6 @@ use Closure;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Http\Request;
 
-use OpenTelemetry\API\Trace\TracerInterface;
 use OpenTelemetry\Contrib\Otlp\SpanExporter;
 use OpenTelemetry\SDK\Common\Attribute\Attributes;
 use OpenTelemetry\SDK\Resource\ResourceInfo;
@@ -33,11 +32,17 @@ class Tracer
         // Create a new span for the incoming request
         $path = $request->fullUrl();
         $method = $request->getMethod();
+        $body = $request->input();
+        $query = $request->query();
 
         // Start the span for tracing the request
-        $parent = $this->getTracerProvider('TODO-APP')->spanBuilder("HTTP $method $path")->startSpan();
+        $appname = env('APP_NAME', 'Unknow');
+
+        $parent = $this->getTracerProvider($appname)->spanBuilder("HTTP $method $path")->startSpan();
         $parent->setAttribute('http.method', $method);
         $parent->setAttribute('http.url', $path);
+        $parent->setAttribute('http.body', $body);
+        $parent->setAttribute('http.query', $query);
 
         // Process the request
         try {
@@ -49,6 +54,8 @@ class Tracer
 
             // Retrieve executed queries after the request
             $queries = DB::getQueryLog();
+            DB::flushQueryLog();
+
             $this->getSQLStatement($parent, $queries);
 
             // Set HTTP status code in the trace
@@ -69,7 +76,11 @@ class Tracer
     {
         // Retrieve the current parent span
         $scope = $parent->activate();
-        $tracer = $this->getTracerProvider('TODO-DB');
+
+        $dbtype = env('DB_CONNECTION', 'Unknow');
+        $dbname = env('DB_DATABASE', 'Unknow');
+
+        $tracer = $this->getTracerProvider($dbtype);
 
         try {
             foreach ($queries as $query) {
@@ -77,8 +88,9 @@ class Tracer
                 $querySpan = $tracer->spanBuilder("SQL Statement")->startSpan();
                 $querySpan->setAttribute('db.statement', $query['query']);
                 $querySpan->setAttribute('db.params', json_encode($query['bindings']));
-                $querySpan->setAttribute('db.type', 'mysql');
-                $querySpan->setAttribute('db.execution_time', $query['time']);
+                $querySpan->setAttribute('db.type', $dbtype);
+                $querySpan->setAttribute('db.name', $dbname);
+                $querySpan->setAttribute('db.execution_time_ms', $query['time']);
                 // End the query span
                 $querySpan->end();
             }
@@ -108,7 +120,7 @@ class Tracer
             ->build();
 
         return $tracerProvider->getTracer(
-            'https://opentelemetry.io/schemas/1.24.0'
+            'TODO-ZONE'
         );
     }
 }

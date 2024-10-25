@@ -17,6 +17,10 @@ class TaskController extends Controller
     {
         $tasks = Task::orderBy('created_at', 'DESC')->get();
 
+        // For Testing multi SQL call
+        $tasks = Task::orderBy('created_at', 'DESC')->get();
+        $tasks = Task::orderBy('created_at', 'DESC')->get();
+
         $response = [
             'status' => 'true',
             'data' => $tasks,
