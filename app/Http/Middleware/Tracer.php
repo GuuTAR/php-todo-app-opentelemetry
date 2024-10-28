@@ -36,7 +36,7 @@ class Tracer
         $query = $request->query();
 
         // Start the span for tracing the request
-        $appname = env('APP_NAME', 'Unknow');
+        $appname = env('APP_NAME', 'Unknown');
 
         $parent = $this->getTracerProvider($appname)->spanBuilder("HTTP $method $path")->startSpan();
         $parent->setAttribute('http.method', $method);
@@ -77,8 +77,8 @@ class Tracer
         // Retrieve the current parent span
         $scope = $parent->activate();
 
-        $dbtype = env('DB_CONNECTION', 'Unknow');
-        $dbname = env('DB_DATABASE', 'Unknow');
+        $dbtype = env('DB_CONNECTION', 'Unknown');
+        $dbname = env('DB_DATABASE', 'Unknown');
 
         $tracer = $this->getTracerProvider($dbtype);
 
@@ -120,7 +120,7 @@ class Tracer
             ->build();
 
         return $tracerProvider->getTracer(
-            'TODO-ZONE'
+            'WEBINTRA-ZONE'
         );
     }
 }
