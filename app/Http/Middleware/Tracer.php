@@ -112,7 +112,7 @@ class Tracer
     {
         // Start the span for tracing the request
         $span = $this->getTracerProvider($this->appname)
-            ->spanBuilder("HTTP {$request->getMethod()} {$request->getRequestUri()}")
+            ->spanBuilder("{$request->getMethod()} {$request->getRequestUri()}")
             ->startSpan();
 
         $span->setAttribute('span.kind', 'HTTP');
