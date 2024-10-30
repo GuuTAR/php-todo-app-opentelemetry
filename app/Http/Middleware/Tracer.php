@@ -24,6 +24,7 @@ class Tracer
     private string $appname; // Service Name
     private string $dbtype; // Database type such as mysql, sql_srv, etcs.
     private string $dbname; // Database Name
+    private string $dbServiceName; // Database Service Name
     private string $otlpEndpoint; // OpenTelemetry Endpoint
     private string $otlpscope; // OpenTelemetry Scope Name
     private string $otlpContentType; // OpenTelemetry Content Type
@@ -34,6 +35,7 @@ class Tracer
         $this->appname = env('APP_NAME', 'Unknown');
         $this->dbtype = env('DB_CONNECTION', 'Unknown');
         $this->dbname = env('DB_DATABASE', 'Unknown');
+        $this->dbServiceName = env('DB_SERVICE_NAME', 'Unknown');
         $this->otlpEndpoint = env('IBM_INSTANA_OTLP_ENDPOINT', 'http://localhost:4318/v1/traces');
         $this->otlpscope = env('IBM_INSTANA_OTLP_SCOPE', 'Unknown');
         $this->otlpContentType = env('IBM_INSTANA_OTLP_CONTENT_TYPE', 'application/json');
@@ -110,17 +112,30 @@ class Tracer
     {
         // Start the span for tracing the request
         $span = $this->getTracerProvider($this->appname)
-            ->spanBuilder("HTTP {$request->getMethod()} {$request->fullUrl()}")
+            ->spanBuilder("HTTP {$request->getMethod()} {$request->getRequestUri()}")
             ->startSpan();
 
-        // Retrieve http metrics
+        $span->setAttribute('span.kind', 'HTTP');
         $span->setAttribute('http.method', $request->getMethod());
         $span->setAttribute('http.url', $request->fullUrl());
-        $span->setAttribute('http.body', $request->input());
-        $span->setAttribute('http.query', $request->query());
+        $span->setAttribute('http.scheme', $request->getScheme());
+        $span->setAttribute('http.host', $request->getHost());
+        $span->setAttribute('http.target', $request->getRequestUri());
+        $span->setAttribute('http.route', $request->route()->uri() ?? 'Unknown');
+        $span->setAttribute('http.user_agent', $request->header('User-Agent'));
 
         return $span;
     }
+
+    private function getDbOperation($dbStatement)
+    {
+        if (preg_match('/^\s*(SELECT|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER|TRUNCATE|REPLACE)\b/i', $dbStatement, $matches)) {
+            return strtoupper($matches[1]);
+        }
+        return 'UNKNOWN';
+    }
+
+
 
     private function recordSQLStatement(SpanInterface $parent, array $queries)
     {
@@ -130,14 +145,16 @@ class Tracer
 
         foreach ($queries as $query) {
             // Start a new span for each SQL query
-            $querySpan = $tracer->spanBuilder("SQL Statement")->startSpan();
+            $querySpan = $tracer->spanBuilder($query['query'])->startSpan();
 
             // Retrieve database metrics
             $querySpan->setAttribute('db.statement', $query['query']);
+            $querySpan->setAttribute('db.operation', $this->getDbOperation($query['query']));
             $querySpan->setAttribute('db.params', json_encode($query['bindings']));
-            $querySpan->setAttribute('db.type', $this->dbtype);
+            $querySpan->setAttribute('db.system', $this->dbtype);
             $querySpan->setAttribute('db.name', $this->dbname);
             $querySpan->setAttribute('db.execution_time_ms', $query['time']);
+            $querySpan->setAttribute('service.name', $this->dbServiceName);
 
             // End the query span
             $querySpan->end();
