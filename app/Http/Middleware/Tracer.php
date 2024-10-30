@@ -26,6 +26,8 @@ class Tracer
     private string $dbname; // Database Name
     private string $otlpEndpoint; // OpenTelemetry Endpoint
     private string $otlpscope; // OpenTelemetry Scope Name
+    private string $otlpContentType; // OpenTelemetry Content Type
+    private string $otelEnabled; // OpenTelemetry Enabled status
 
     public function __construct()
     {
@@ -34,6 +36,8 @@ class Tracer
         $this->dbname = env('DB_DATABASE', 'Unknown');
         $this->otlpEndpoint = env('IBM_INSTANA_OTLP_ENDPOINT', 'http://localhost:4318/v1/traces');
         $this->otlpscope = env('IBM_INSTANA_OTLP_SCOPE', 'Unknown');
+        $this->otlpContentType = env('IBM_INSTANA_OTLP_CONTENT_TYPE', 'application/json');
+        $this->otelEnabled = env('IBM_INSTANA_OTEL_ENABLED', false);
     }
 
     /**
@@ -46,6 +50,12 @@ class Tracer
     public function handle(Request $request, Closure $next)
     {
         try {
+            if (!$this->otelEnabled) {
+                $response = $next($request);
+                return $response;
+            }
+
+
             // Enable query logging
             DB::enableQueryLog();
 
@@ -143,7 +153,7 @@ class Tracer
         ])));
 
         // Get Exporter 
-        $transport = (new OtlpHttpTransportFactory())->create($this->otlpEndpoint, 'application/json');
+        $transport = (new OtlpHttpTransportFactory())->create($this->otlpEndpoint, $this->otlpContentType);
         $spanExporter = new SpanExporter($transport);
 
         // Create Tracer Provider 
