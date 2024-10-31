@@ -18,6 +18,7 @@ use OpenTelemetry\SDK\Trace\TracerProvider;
 use OpenTelemetry\SemConv\ResourceAttributes;
 use OpenTelemetry\Contrib\Otlp\OtlpHttpTransportFactory;
 use OpenTelemetry\API\Trace\SpanInterface;
+use OpenTelemetry\API\Trace\SpanKind;
 
 class Tracer
 {
@@ -29,6 +30,7 @@ class Tracer
     private string $otlpscope; // OpenTelemetry Scope Name
     private string $otlpContentType; // OpenTelemetry Content Type
     private string $otelEnabled; // OpenTelemetry Enabled status
+    private string $otelSQLSperateTraceEnabled;
 
     public function __construct()
     {
@@ -40,6 +42,7 @@ class Tracer
         $this->otlpscope = env('IBM_INSTANA_OTLP_SCOPE', 'Unknown');
         $this->otlpContentType = env('IBM_INSTANA_OTLP_CONTENT_TYPE', 'application/json');
         $this->otelEnabled = env('IBM_INSTANA_OTEL_ENABLED', false);
+        $this->otelSQLSperateTraceEnabled = false;
     }
 
     /**
@@ -57,9 +60,16 @@ class Tracer
                 return $response;
             }
 
+            if ($this->otelSQLSperateTraceEnabled) {
+                $this->enableSeperateSQLTrace();
+            }
 
             // Enable query logging
             DB::enableQueryLog();
+
+            // Retrieve Tracing
+            $parent = $this->recordHttpMetrics($request);
+
 
             // Process the request
             // Pass the request to the next middleware/controller
@@ -68,16 +78,18 @@ class Tracer
             // Retrieve executed queries after the request
             $queries = DB::getQueryLog();
             DB::flushQueryLog();
-
-            // Retrieve Tracing
-            $parent = $this->recordHttpMetrics($request);
             $parent->setAttribute('http.status_code', $response->getStatusCode());
 
             // Get controller and method information
             $this->recordControllerInfo($parent);
 
             // Retrieve SQL Statement
-            $this->recordSQLStatement($parent, $queries);
+            $scope = $parent->activate();
+
+            foreach ($queries as $query) {
+                $this->recordSQLStatement($query);
+            }
+            $scope->detach();
 
             // Stop the span for tracing the request
             $parent->end();
@@ -113,6 +125,7 @@ class Tracer
         // Start the span for tracing the request
         $span = $this->getTracerProvider($this->appname)
             ->spanBuilder("{$request->getMethod()} {$request->getRequestUri()}")
+            ->setSpanKind(SpanKind::KIND_SERVER)
             ->startSpan();
 
         $span->setAttribute('span.kind', 'HTTP');
@@ -121,7 +134,7 @@ class Tracer
         $span->setAttribute('http.scheme', $request->getScheme());
         $span->setAttribute('http.host', $request->getHost());
         $span->setAttribute('http.target', $request->getRequestUri());
-        $span->setAttribute('http.route', $request->route()->uri() ?? 'Unknown');
+        $span->setAttribute('http.route', $request->getRequestUri());
         $span->setAttribute('http.user_agent', $request->header('User-Agent'));
 
         return $span;
@@ -134,32 +147,21 @@ class Tracer
         }
         return 'UNKNOWN';
     }
-
-
-
-    private function recordSQLStatement(SpanInterface $parent, array $queries)
+    private function recordSQLStatement($query)
     {
-        // Retrieve the current parent span
-        $scope = $parent->activate();
         $tracer = $this->getTracerProvider($this->dbtype);
+        $querySpan = $tracer->spanBuilder($query['query'])->startSpan();
 
-        foreach ($queries as $query) {
-            // Start a new span for each SQL query
-            $querySpan = $tracer->spanBuilder($query['query'])->startSpan();
-
-            // Retrieve database metrics
-            $querySpan->setAttribute('db.statement', $query['query']);
-            $querySpan->setAttribute('db.operation', $this->getDbOperation($query['query']));
-            $querySpan->setAttribute('db.params', json_encode($query['bindings']));
-            $querySpan->setAttribute('db.system', $this->dbtype);
-            $querySpan->setAttribute('db.name', $this->dbname);
-            $querySpan->setAttribute('db.execution_time_ms', $query['time']);
-            $querySpan->setAttribute('service.name', $this->dbServiceName);
-
-            // End the query span
-            $querySpan->end();
-        }
-        $scope->detach();
+        // Retrieve database metrics
+        $querySpan->setAttribute('db.statement', $query['query']);
+        $querySpan->setAttribute('db.operation', $this->getDbOperation($query['query']));
+        $querySpan->setAttribute('db.params', json_encode($query['bindings']));
+        $querySpan->setAttribute('db.system', $this->dbtype);
+        $querySpan->setAttribute('db.name', $this->dbname);
+        $querySpan->setAttribute('db.execution_time_ms', $query['time']);
+        $querySpan->setAttribute('service.name', $this->dbServiceName);
+        // End the query span
+        $querySpan->end();
     }
 
     private function getTracerProvider(string $serviceName)
@@ -183,5 +185,28 @@ class Tracer
             ->build();
 
         return $tracerProvider->getTracer($this->otlpscope);
+    }
+
+    public function enableSeperateSQLTrace()
+    {
+        DB::listen(function ($query) {
+            // Retrieve query span
+            $querySpan = $this->getTracerProvider($this->dbServiceName)
+                ->spanBuilder($query->sql)
+                ->setSpanKind(SpanKind::KIND_SERVER)
+                ->startSpan();
+
+            // Retrieve database metrics
+            $querySpan->setAttribute('db.statement', $query->sql);
+            $querySpan->setAttribute('db.operation', $this->getDbOperation($query->sql));
+            $querySpan->setAttribute('db.params', json_encode($query->bindings));
+            $querySpan->setAttribute('db.system', $this->dbtype);
+            $querySpan->setAttribute('db.name', $this->dbname);
+            $querySpan->setAttribute('db.execution_time_ms', $query->time);
+            $querySpan->setAttribute('service.name', $this->dbServiceName);
+
+            // End the query span
+            $querySpan->end();
+        });
     }
 }
