@@ -158,10 +158,14 @@ class Tracer
             // Retrieve SQL Statement
             $scope = $parent->activate();
 
+            $endQueryTimeNano = (int) (microtime(true) * 1_000_000_000);
+            $startQueryTimeNano = $endQueryTimeNano - (int) ($query->time * 1_000_000);
+
             // Retrieve query span
             $querySpan = $this->tracerDb
                 ->getTracer($this->otlpscope)
                 ->spanBuilder($query->sql)
+                ->setStartTimestamp($startQueryTimeNano)
                 ->startSpan();
 
             // Retrieve database metrics
@@ -174,7 +178,7 @@ class Tracer
             $querySpan->setAttribute('service.name', $this->dbServiceName);
 
             // End the query span
-            $querySpan->end();
+            $querySpan->end($endQueryTimeNano);
 
             $scope->detach();
         });
