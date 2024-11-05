@@ -130,7 +130,6 @@ class Tracer
             ->setSpanKind(SpanKind::KIND_SERVER)
             ->startSpan();
 
-        $span->setAttribute('span.kind', 'HTTP');
         $span->setAttribute('http.method', $request->getMethod());
         $span->setAttribute('http.url', $request->fullUrl());
         $span->setAttribute('http.scheme', $request->getScheme());
