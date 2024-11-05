@@ -17,7 +17,6 @@ use OpenTelemetry\Contrib\Otlp\OtlpHttpTransportFactory;
 use OpenTelemetry\Contrib\Otlp\SpanExporter;
 use OpenTelemetry\API\Trace\SpanInterface;
 use OpenTelemetry\API\Trace\SpanKind;
-use OpenTelemetry\API\Trace\TracerInterface;
 use OpenTelemetry\SemConv\ResourceAttributes;
 
 class Tracer
@@ -31,8 +30,8 @@ class Tracer
     private string $otlpContentType; // OpenTelemetry Content Type
     private string $otelEnabled; // OpenTelemetry Enabled status
 
-    private TracerProvider $tracerProvider;
-    private TracerInterface $tracer;
+    private TracerProvider $tracer;
+    private TracerProvider $tracerDb;
 
     public function __construct()
     {
@@ -46,6 +45,7 @@ class Tracer
         $this->otelEnabled = env('IBM_INSTANA_OTEL_ENABLED', false);
 
         $this->tracer = $this->getTracerProvider($this->appname);
+        $this->tracerDb = $this->getTracerProvider($this->dbServiceName);
     }
 
     /**
@@ -102,7 +102,8 @@ class Tracer
         $parent->setAttribute('tracing.time_percent', $traceTimePercent);
         $parent->end();
 
-        $this->tracerProvider->shutdown();
+        $this->tracer->shutdown();
+        $this->tracerDb->shutdown();
         return $response;
     }
 
@@ -126,7 +127,9 @@ class Tracer
     private function recordHttpMetrics(Request $request): SpanInterface
     {
         // Start the span for tracing the request
-        $span = $this->tracer->spanBuilder("{$request->getMethod()} {$request->getRequestUri()}")
+        $span = $this->tracer
+            ->getTracer($this->otlpscope)
+            ->spanBuilder("{$request->getMethod()} {$request->getRequestUri()}")
             ->setSpanKind(SpanKind::KIND_SERVER)
             ->startSpan();
 
@@ -156,7 +159,10 @@ class Tracer
             $scope = $parent->activate();
 
             // Retrieve query span
-            $querySpan = $this->tracer->spanBuilder($query->sql)->startSpan();
+            $querySpan = $this->tracerDb
+                ->getTracer($this->otlpscope)
+                ->spanBuilder($query->sql)
+                ->startSpan();
 
             // Retrieve database metrics
             $querySpan->setAttribute('db.statement', $query->sql);
@@ -178,7 +184,7 @@ class Tracer
         return $parent;
     }
 
-    private function getTracerProvider(string $serviceName): TracerInterface
+    private function getTracerProvider(string $serviceName): TracerProvider
     {
         // Initialize Resource Infomation
         $resource = ResourceInfoFactory::emptyResource()->merge(ResourceInfo::create(Attributes::create([
@@ -197,9 +203,6 @@ class Tracer
             )
             ->setResource($resource)
             ->build();
-
-        $this->tracerProvider = $tracerProvider;
-
-        return $tracerProvider->getTracer($this->otlpscope);
+        return $tracerProvider;
     }
 }
