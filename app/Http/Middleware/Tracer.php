@@ -21,13 +21,20 @@ use OpenTelemetry\SemConv\ResourceAttributes;
 
 class Tracer
 {
+    private const MICRO_TO_NANO_TIME_PRECISION = 1_000_000_000;
+    private const MILLI_TO_NANO_TIME_PRECISION = 1_000_000;
+
     private string $appname; // Service Name
+
     private string $dbtype; // Database type such as mysql, sql_srv, etcs.
     private string $dbname; // Database Name
     private string $dbServiceName; // Database Service Name
+
     private string $otlpEndpoint; // OpenTelemetry Endpoint
     private string $otlpscope; // OpenTelemetry Scope Name
     private string $otlpContentType; // OpenTelemetry Content Type
+    private string $otlpIsUsingBatchProcessor; // Status for using batch processor to optimize
+
     private string $otelEnabled; // OpenTelemetry Enabled status
 
     private TracerProvider $tracer;
@@ -36,12 +43,16 @@ class Tracer
     public function __construct()
     {
         $this->appname = env('APP_NAME', 'Unknown');
+
         $this->dbtype = env('DB_CONNECTION', 'Unknown');
         $this->dbname = env('DB_DATABASE', 'Unknown');
         $this->dbServiceName = env('DB_SERVICE_NAME', 'Unknown');
+
         $this->otlpEndpoint = env('IBM_INSTANA_OTLP_ENDPOINT', 'http://localhost:4318/v1/traces');
         $this->otlpscope = env('IBM_INSTANA_OTLP_SCOPE', 'Unknown');
         $this->otlpContentType = env('IBM_INSTANA_OTLP_CONTENT_TYPE', 'application/json');
+        $this->otlpIsUsingBatchProcessor = env('IBM_INSTANA_OTLP_USING_BATCH', false);
+
         $this->otelEnabled = env('IBM_INSTANA_OTEL_ENABLED', false);
 
         $this->tracer = $this->getTracerProvider($this->appname);
@@ -100,6 +111,7 @@ class Tracer
         $parent->setAttribute('http.total_time', $totalTime);
         $parent->setAttribute('tracing.time_s', $traceTime);
         $parent->setAttribute('tracing.time_percent', $traceTimePercent);
+        $parent->setAttribute('tracing.processor', $this->otlpIsUsingBatchProcessor ? 'batch' : 'simple');
         $parent->end();
 
         $this->tracer->shutdown();
@@ -158,8 +170,9 @@ class Tracer
             // Retrieve SQL Statement
             $scope = $parent->activate();
 
-            $endQueryTimeNano = (int) (microtime(true) * 1_000_000_000);
-            $startQueryTimeNano = $endQueryTimeNano - (int) ($query->time * 1_000_000);
+            $endQueryTimeNano = (int) (microtime(true) * self::MICRO_TO_NANO_TIME_PRECISION);
+            $timeDiff = (int) ($query->time * self::MILLI_TO_NANO_TIME_PRECISION);
+            $startQueryTimeNano = $endQueryTimeNano - $timeDiff;
 
             // Retrieve query span
             $querySpan = $this->tracerDb
@@ -202,8 +215,9 @@ class Tracer
         // Create Tracer Provider 
         $tracerProvider = TracerProvider::builder()
             ->addSpanProcessor(
-                // new SimpleSpanProcessor($spanExporter)
-                (new BatchSpanProcessorBuilder($spanExporter))->build()
+                $this->otlpIsUsingBatchProcessor ?
+                    (new BatchSpanProcessorBuilder($spanExporter))->build() :
+                    new SimpleSpanProcessor($spanExporter)
             )
             ->setResource($resource)
             ->build();
